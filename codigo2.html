@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Caudex:ital,wght@0,400;0,700;1,400;1,700&family=Changa+One:ital@0;1&display=swap" rel="stylesheet">
+    <title>Biblioteca - Gestión y Historial</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --success: #16a34a;
+            --warning: #d97706;
+            --danger: #dc2626;
+            --bg: #f8fafc;
+            --border: #e2e8f0;
+            --text: #0f172a;
+        }
+        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        .container { max-width: 1300px; margin: 0 auto; background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); }
+        h2, h3 { margin-top: 0; }
+        
+        /* Formulario */
+        form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 2px solid var(--border); }
+        input, select, button { padding: 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; width: 100%; box-sizing: border-box; }
+        button { cursor: pointer; font-weight: 500; transition: 0.2s; }
+        .btn-primary { background: var(--primary); color: white; border: none; grid-column: 1 / -1; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-export { background: var(--success); color: white; border: none; margin-bottom: 16px; width: auto; }
+        
+        /* Buscador */
+        .search-box { position: relative; margin-bottom: 12px; }
+        .search-box input { padding-left: 36px; border: 2px solid var(--primary); }
+        .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: #64748b; }
+        
+        /* Tablas */
+        .table-container { overflow-x: auto; margin-bottom: 32px; border: 1px solid var(--border); border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+        th { background: #f1f5f9; font-weight: 600; position: sticky; top: 0; }
+        tr:hover { background: #f8fafc; }
+        .status-prestado { color: var(--warning); font-weight: 600; }
+        .status-entregado { color: var(--success); font-weight: 600; }
+        .btn-archive { background: var(--danger); color: white; border: none; padding: 6px 12px; border-radius: 4px; }
+        .btn-archive:hover { background: #b91c1c; }
+        .empty { text-align: center; padding: 24px; color: #64748b; font-style: italic; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Sistema de Préstamos Bibliotecarios</h2>
+    
+    <form id="formPrestamo">
+        <input type="text" id="carnet" placeholder="Carnet (G452JNG)" required>
+        <input type="text" id="nombre" placeholder="Nombre completo" required>
+        <input type="text" id="seccion" placeholder="Sección (1ro A)" required>
+        <input type="text" id="libro" placeholder="Título del libro" required>
+        <input type="text" id="codigoLibro" placeholder="Código (LBO-001)" required>
+        <select id="estado">
+            <option value="prestado">Prestado</option>
+        </select>
+        <button type="submit" class="btn-primary">📥 Registrar Préstamo</button>
+    </form>
+
+    <!-- BUSCADOR EN TIEMPO REAL -->
+    <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="buscador" placeholder="Buscar por nombre o carnet..." oninput="filtrarTabla(this.value)">
+    </div>
+
+    <!-- TABLA 1: PRÉSTAMOS ACTIVOS -->
+    <h3>📖 Libros Prestados Actualmente</h3>
+    <div class="table-container">
+        <table id="tablaActivos">
+            <thead>
+                <tr>
+                    <th>Carnet</th><th>Nombre</th><th>Sección</th><th>Libro</th>
+                    <th>Código</th><th>Fecha Préstamo</th><th>Estado</th>
+                    <th>Fecha Entrega</th><th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="cuerpoActivos"><tr><td colspan="9" class="empty">Sin préstamos activos</td></tr></tbody>
+        </table>
+    </div>
+
+    <!-- TABLA 2: HISTORIAL / ARCHIVADOS -->
+    <h3>📜 Historial de Libros Entregados / Archivados</h3>
+    <button class="btn-export" onclick="descargarHistorialJSON()">📥 Descargar Historial JSON Completo</button>
+    <div class="table-container">
+        <table id="tablaHistorial">
+            <thead>
+                <tr>
+                    <th>Carnet</th><th>Nombre</th><th>Sección</th><th>Libro</th>
+                    <th>Código</th><th>Fecha Préstamo</th><th>Fecha Entrega</th><th>Fecha Archivo</th>
+                </tr>
+            </thead>
+            <tbody id="cuerpoHistorial"><tr><td colspan="8" class="empty">Sin historial registrado</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // 🔹 Estado de la aplicación (2 datasets separados)
+    let prestamosActivos = [];
+    let historialEntregados = [];
+    const STORAGE_ACTIVE = 'biblioteca_activos';
+    const STORAGE_HISTORY = 'biblioteca_historial';
+
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', () => {
+        cargarDatos();
+        renderizarTablas();
+    });
+
+    // Utilidades de fecha
+    const hoy = () => new Date().toISOString().split('T')[0];
+    const formatearFecha = (f) => f ? `${f.split('-').reverse().join('/')}` : 'Pendiente';
+    const ahora = () => new Date().toLocaleString('es-ES');
+
+    // 📥 Registro de nuevo préstamo
+    document.getElementById('formPrestamo').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const nuevo = {
+            id: Date.now(),
+            carnet: document.getElementById('carnet').value.trim(),
+            nombre: document.getElementById('nombre').value.trim(),
+            seccion: document.getElementById('seccion').value.trim(),
+            libro: document.getElementById('libro').value.trim(),
+            codigoLibro: document.getElementById('codigoLibro').value.trim(),
+            fechaPrestamo: hoy(),
+            estado: 'prestado',
+            fechaEntrega: ''
+        };
+        prestamosActivos.push(nuevo);
+        guardarDatos();
+        renderizarTablas();
+        e.target.reset();
+    });
+
+    // 🔄 Mover de Activos a Historial (Función "Eliminar/Archivar")
+    function archivarRegistro(index) {
+        if (!confirm('¿Finalizar préstamo y mover al historial? Esta acción no elimina el registro, solo lo archiva.')) return;
+        
+        const registro = prestamosActivos.splice(index, 1)[0];
+        registro.estado = 'entregado';
+        if (!registro.fechaEntrega) registro.fechaEntrega = hoy();
+        registro.fechaArchivo = ahora();
+        
+        historialEntregados.unshift(registro); // Lo más reciente arriba
+        guardarDatos();
+        renderizarTablas();
+    }
+
+    // 🎨 Renderizado de tablas
+    function renderizarTablas() {
+        renderTabla(prestamosActivos, 'cuerpoActivos', true);
+        renderTabla(historialEntregados, 'cuerpoHistorial', false);
+    }
+
+    function renderTabla(data, tbodyId, esActiva) {
+        const tbody = document.getElementById(tbodyId);
+        tbody.innerHTML = '';
+        if (data.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="${esActiva ? 9 : 8}" class="empty">${esActiva ? 'Sin préstamos activos' : 'Sin historial registrado'}</td></tr>`;
+            return;
+        }
+
+        data.forEach((reg, idx) => {
+            const tr = document.createElement('tr');
+            if (esActiva) {
+                tr.innerHTML = `
+                    <td>${reg.carnet}</td><td>${reg.nombre}</td><td>${reg.seccion}</td>
+                    <td>${reg.libro}</td><td>${reg.codigoLibro}</td>
+                    <td>${formatearFecha(reg.fechaPrestamo)}</td>
+                    <td class="status-${reg.estado}">${reg.estado.toUpperCase()}</td>
+                    <td>${formatearFecha(reg.fechaEntrega)}</td>
+                    <td><button class="btn-archive" onclick="archivarRegistro(${idx})">Archivar</button></td>
+                `;
+            } else {
+                tr.innerHTML = `
+                    <td>${reg.carnet}</td><td>${reg.nombre}</td><td>${reg.seccion}</td>
+                    <td>${reg.libro}</td><td>${reg.codigoLibro}</td>
+                    <td>${formatearFecha(reg.fechaPrestamo)}</td>
+                    <td class="status-entregado">${formatearFecha(reg.fechaEntrega)}</td>
+                    <td style="color:#64748b; font-size:12px;">${reg.fechaArchivo}</td>
+                `;
+            }
+            tbody.appendChild(tr);
+        });
+    }
+
+    // 🔍 Buscador en tiempo real (filtra tabla activa)
+    function filtrarTabla(query) {
+        query = query.toLowerCase().trim();
+        const filas = document.querySelectorAll('#cuerpoActivos tr');
+        filas.forEach(fila => {
+            const carnet = fila.children[0]?.textContent.toLowerCase() || '';
+            const nombre = fila.children[1]?.textContent.toLowerCase() || '';
+            const coincide = nombre.includes(query) || carnet.includes(query);
+            fila.classList.toggle('hidden', !coincede && query !== '');
+        });
+    }
+
+    // 💾 Persistencia
+    function guardarDatos() {
+        localStorage.setItem(STORAGE_ACTIVE, JSON.stringify(prestamosActivos));
+        localStorage.setItem(STORAGE_HISTORY, JSON.stringify(historialEntregados));
+    }
+
+    function cargarDatos() {
+        const activos = localStorage.getItem(STORAGE_ACTIVE);
+        const historial = localStorage.getItem(STORAGE_HISTORY);
+        if (activos) prestamosActivos = JSON.parse(activos);
+        if (historial) historialEntregados = JSON.parse(historial);
+    }
+
+    // 📥 Exportar JSON completo
+    function descargarHistorialJSON() {
+        const data = { activos: prestamosActivos, historial: historialEntregados, exportado: ahora() };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `biblioteca_historial_${hoy()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+</script>
+
+</body>
+</html>

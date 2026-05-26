@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestión de Préstamos - Biblioteca</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --bg: #f8fafc;
+            --border: #e2e8f0;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            margin: 0;
+            padding: 20px;
+            color: #1e293b;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+        h2 { margin-top: 0; color: #0f172a; }
+        form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid var(--border);
+        }
+        input, select, button {
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        button {
+            cursor: pointer;
+            font-weight: 500;
+            transition: 0.2s;
+        }
+        .btn-primary { background: var(--primary); color: white; border: none; grid-column: 1 / -1; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-download { background: #10b981; color: white; border: none; margin-bottom: 16px; }
+        .btn-download:hover { background: #059669; }
+        .btn-delete { background: var(--danger); color: white; border: none; padding: 6px 12px; }
+        .btn-delete:hover { background: #dc2626; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: #f1f5f9; font-weight: 600; }
+        tr:hover { background: #f8fafc; }
+        .status-prestado { color: #d97706; font-weight: 500; }
+        .status-entregado { color: #059669; font-weight: 500; }
+        .empty-state { text-align: center; color: #64748b; padding: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>📚 Registro de Préstamos de Biblioteca</h2>
+    
+    <form id="formPrestamo">
+        <input type="text" id="carnet" placeholder="Carnet (ej: G452JNG)" required>
+        <input type="text" id="nombre" placeholder="Nombre completo" required>
+        <input type="text" id="seccion" placeholder="Sección (ej: 1ro A)" required>
+        <input type="text" id="libro" placeholder="Título del libro" required>
+        <input type="text" id="codigoLibro" placeholder="Código del libro (ej: LBO-001)" required>
+        <input type="hidden" id="fechaPrestamo">
+        <input type="hidden" id="fechaEntrega">
+        <select id="estado">
+            <option value="prestado">Prestado</option>
+            <option value="entregado">Entregado</option>
+        </select>
+        <button type="submit" class="btn-primary">Registrar Préstamo</button>
+    </form>
+
+    <button class="btn-download" onclick="descargarHistorialJSON()">📥 Descargar Historial JSON</button>
+
+    <table id="tablaPrestamos">
+        <thead>
+            <tr>
+                <th>Carnet</th>
+                <th>Nombre</th>
+                <th>Sección</th>
+                <th>Libro</th>
+                <th>Código</th>
+                <th>Fecha Préstamo</th>
+                <th>Estado</th>
+                <th>Fecha Entrega</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="cuerpoTabla">
+            <tr><td colspan="9" class="empty-state">No hay registros aún. Agrega un préstamo arriba.</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+    // Array principal que actuará como tu dataset en memoria
+    let datasetPrestamos = [];
+    const STORAGE_KEY = 'biblioteca_prestamos_v1';
+
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', () => {
+        cargarDesdeLocalStorage();
+        renderizarTabla();
+    });
+
+    // Obtener fecha actual en formato YYYY-MM-DD
+    const obtenerFechaActual = () => new Date().toISOString().split('T')[0];
+
+    // Formatear fecha para visualización (DD/MM/YYYY)
+    const formatearFecha = (fecha) => {
+        if (!fecha) return 'Pendiente';
+        const [y, m, d] = fecha.split('-');
+        return `${d}/${m}/${y}`;
+    };
+
+    // Manejo del formulario
+    document.getElementById('formPrestamo').addEventListener('submit', (e) => {
+        e.preventDefault();
+
+        const estadoSeleccionado = document.getElementById('estado').value;
+        
+        const nuevoRegistro = {
+            id: Date.now(), // ID único para gestión interna
+            carnet: document.getElementById('carnet').value.trim(),
+            nombre: document.getElementById('nombre').value.trim(),
+            seccion: document.getElementById('seccion').value.trim(),
+            libro: document.getElementById('libro').value.trim(),
+            codigoLibro: document.getElementById('codigoLibro').value.trim(),
+            fechaPrestamo: obtenerFechaActual(), // Autocompletado
+            estado: estadoSeleccionado,
+            fechaEntrega: estadoSeleccionado === 'entregado' ? obtenerFechaActual() : '' // Autocompletado si aplica
+        };
+
+        datasetPrestamos.push(nuevoRegistro);
+        guardarEnLocalStorage();
+        renderizarTabla();
+        e.target.reset(); // Limpiar formulario
+    });
+
+    // Renderizado de la tabla
+    function renderizarTabla() {
+        const tbody = document.getElementById('cuerpoTabla');
+        tbody.innerHTML = '';
+
+        if (datasetPrestamos.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No hay registros aún. Agrega un préstamo arriba.</td></tr>';
+            return;
+        }
+
+        datasetPrestamos.forEach((reg, index) => {
+            const tr = document.createElement('tr');
+            const claseEstado = reg.estado === 'prestado' ? 'status-prestado' : 'status-entregado';
+            
+            tr.innerHTML = `
+                <td>${reg.carnet}</td>
+                <td>${reg.nombre}</td>
+                <td>${reg.seccion}</td>
+                <td>${reg.libro}</td>
+                <td>${reg.codigoLibro}</td>
+                <td>${formatearFecha(reg.fechaPrestamo)}</td>
+                <td class="${claseEstado}">
+                    <select onchange="cambiarEstado(${index}, this.value)" style="padding: 4px; font-size: 13px;">
+                        <option value="prestado" ${reg.estado === 'prestado' ? 'selected' : ''}>Prestado</option>
+                        <option value="entregado" ${reg.estado === 'entregado' ? 'selected' : ''}>Entregado</option>
+                    </select>
+                </td>
+                <td>${formatearFecha(reg.fechaEntrega)}</td>
+                <td><button class="btn-delete" onclick="eliminarRegistro(${index})">Eliminar</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Actualizar estado desde la tabla
+    function cambiarEstado(index, nuevoEstado) {
+        datasetPrestamos[index].estado = nuevoEstado;
+        if (nuevoEstado === 'entregado' && !datasetPrestamos[index].fechaEntrega) {
+            datasetPrestamos[index].fechaEntrega = obtenerFechaActual();
+        }
+        guardarEnLocalStorage();
+        renderizarTabla();
+    }
+
+    // Eliminar fila completa
+    function eliminarRegistro(index) {
+        if (confirm('¿Estás seguro de que deseas eliminar este registro permanentemente?')) {
+            datasetPrestamos.splice(index, 1);
+            guardarEnLocalStorage();
+            renderizarTabla();
+        }
+    }
+
+    // Persistencia en localStorage
+    function guardarEnLocalStorage() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(datasetPrestamos));
+    }
+
+    function cargarDesdeLocalStorage() {
+        const data = localStorage.getItem(STORAGE_KEY);
+        if (data) {
+            datasetPrestamos = JSON.parse(data);
+        }
+    }
+
+    // Exportar historial como archivo JSON descargable
+    function descargarHistorialJSON() {
+        if (datasetPrestamos.length === 0) {
+            alert('No hay datos para exportar.');
+            return;
+        }
+        const jsonStr = JSON.stringify(datasetPrestamos, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `historial_biblioteca_${obtenerFechaActual()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+</script>
+
+</body>
+</html>
